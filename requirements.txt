@@ -1,0 +1,26 @@
+# Core RL
+ray[rllib]>=2.9.0
+gymnasium>=0.29.0
+stable-baselines3>=2.3.0
+
+# Numerical
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.8.0
+opencv-python>=4.8.0
+
+# Logging
+tensorboard>=2.15.0
+wandb>=0.16.0
+
+# Config
+pyyaml>=6.0
+omegaconf>=2.3.0
+
+# Testing
+pytest>=7.4.0
+
+# Others
+tqdm>=4.66.0
