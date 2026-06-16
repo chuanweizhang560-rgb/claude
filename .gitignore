@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Conda
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 大文件 - PX4源码和ROS2工作空间
+assets/px4/
+assets/ros2_ws/
+
+# 日志临时文件
+outputs/logs/px4_*.log
+outputs/logs/mavros*.log
+outputs/logs/ulog_tmp/
+
+# OMC状态
+.omc/
+
+# 旧的标定数据（保留最终版）
+outputs/logs/calibration_online_20260616_174605.csv

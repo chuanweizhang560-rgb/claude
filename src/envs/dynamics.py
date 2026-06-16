@@ -5,10 +5,14 @@ class QuadrotorDynamics:
     """简化四旋翼动力学：一阶速度响应+阻力"""
 
     def __init__(self, config: dict = None):
-        # 默认参数（从PX4阶跃响应标定拟合）
+        # 默认参数（从PX4 Gazebo SITL阶跃响应标定拟合）
+        # 水平轴: Kp=0.645, tau=1.5s, 稳态≈98.5%指令
+        # 垂直轴: Kp=1.57, tau=0.63s, 稳态≈99.4%指令
         self.mass = 1.5          # kg
-        self.kp = 2.5869         # 速度响应增益（PX4标定）
-        self.kd = 0.8389         # 阻力系数（PX4标定）
+        self.kp = 0.6452         # 水平速度响应增益（Gazebo标定）
+        self.kd = 0.01           # 阻力系数（Gazebo标定，极小）
+        self.kp_z = 1.57         # 垂直速度响应增益（Gazebo标定）
+        self.kd_z = 0.01         # 垂直阻力系数（Gazebo标定）
         self.max_vel = 5.0       # 最大水平速度 m/s
         self.max_vel_z = 3.0     # 最大垂直速度 m/s
         self.max_yaw_rate = 1.0  # 最大偏航角速率 rad/s
@@ -47,13 +51,19 @@ class QuadrotorDynamics:
 
         vel_cmd = np.array(vel_cmd, dtype=np.float64)
 
-        # 1. 一阶响应：加速度 = kp*(目标速度-当前速度) - kd*当前速度
-        acc = self.kp * (vel_cmd[:3] - vel) - self.kd * vel
+        # 1. 水平轴响应：加速度 = kp*(目标速度-当前速度) - kd*当前速度
+        acc_h = self.kp * (vel_cmd[:2] - vel[:2]) - self.kd * vel[:2]
+
+        # 2. 垂直轴响应：使用kp_z和kd_z
+        acc_z = self.kp_z * (vel_cmd[2] - vel[2]) - self.kd_z * vel[2]
+
+        acc = np.array([acc_h[0], acc_h[1], acc_z])
 
         # 2. 风力影响：加速度额外项 = k_wind * (wind - velocity)
         if wind is not None:
             wind = np.array(wind, dtype=np.float64)
-            acc += self.k_wind * (wind - vel)
+            acc[:2] += self.k_wind * (wind[:2] - vel[:2])
+            acc[2] += self.k_wind * (wind[2] - vel[2])
 
         # 3. 速度积分
         vel = vel + acc * self.dt
