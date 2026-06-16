@@ -5,10 +5,10 @@ class QuadrotorDynamics:
     """简化四旋翼动力学：一阶速度响应+阻力"""
 
     def __init__(self, config: dict = None):
-        # 默认参数（模拟Iris四旋翼，后期用PX4标定替换）
+        # 默认参数（从PX4阶跃响应标定拟合）
         self.mass = 1.5          # kg
-        self.kp = 3.0            # 速度响应增益（一阶响应系数）
-        self.kd = 0.5            # 阻力系数
+        self.kp = 2.5869         # 速度响应增益（PX4标定）
+        self.kd = 0.8389         # 阻力系数（PX4标定）
         self.max_vel = 5.0       # 最大水平速度 m/s
         self.max_vel_z = 3.0     # 最大垂直速度 m/s
         self.max_yaw_rate = 1.0  # 最大偏航角速率 rad/s
