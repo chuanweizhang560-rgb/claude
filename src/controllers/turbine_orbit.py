@@ -20,7 +20,7 @@ class TurbineOrbitController(RuleController):
         self.hub_height_offset = 5.0    # assistant在轮毂上方偏移
         self.angular_speed = 0.1        # rad/s 环绕角速度
         self.climb_speed = 0.5          # m/s 上升速度
-        self.approach_speed = 3.0       # 接近速度 m/s
+        self.approach_speed = 5.0       # 接近速度 m/s
         self.dt = 0.05
 
         # 内部状态
@@ -88,13 +88,21 @@ class TurbineOrbitController(RuleController):
             if self.orbit_height > turbine_height:
                 self.orbit_height = turbine_height
 
-            # 速度：切线方向 + 上升
-            tangent = np.array([
-                -self.orbit_radius * self.angular_speed * np.sin(self.orbit_angle),
-                self.orbit_radius * self.angular_speed * np.cos(self.orbit_angle),
-                self.climb_speed,
-            ])
-            vel_cmd = tangent
+            # 检查UAV是否在轨道附近（距轨道点<5m则用切线，否则先飞向轨道点）
+            dist_to_orbit = np.linalg.norm(pos - target_on_orbit)
+            if dist_to_orbit > 5.0:
+                # 飞向轨道点
+                to_orbit = target_on_orbit - pos
+                speed = min(self.approach_speed, dist_to_orbit)
+                vel_cmd = to_orbit / dist_to_orbit * speed
+            else:
+                # 速度：切线方向 + 上升
+                tangent = np.array([
+                    -self.orbit_radius * self.angular_speed * np.sin(self.orbit_angle),
+                    self.orbit_radius * self.angular_speed * np.cos(self.orbit_angle),
+                    self.climb_speed,
+                ])
+                vel_cmd = tangent
 
         else:
             # assistant：在轮毂高度悬停绕小圈

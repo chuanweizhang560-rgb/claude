@@ -34,3 +34,10 @@ outputs/logs/ulog_tmp/
 
 # 旧的标定数据（保留最终版）
 outputs/logs/calibration_online_20260616_174605.csv
+
+# RL训练产物（checkpoint太大不提交）
+outputs/checkpoints/
+outputs/tb_logs/
+
+# Gazebo模型配置文件（从PX4复制，不提交）
+assets/models/
