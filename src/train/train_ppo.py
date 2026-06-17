@@ -41,8 +41,8 @@ def train(num_iterations: int = 200, checkpoint_freq: int = 20):
     # 注册自定义环境
     register_env("inspection", env_creator)
 
-    # 初始化Ray
-    ray.init(ignore_reinit_error=True)
+    # 初始化Ray（限制资源避免OOM）
+    ray.init(ignore_reinit_error=True, num_cpus=2, object_store_memory=500_000_000)
 
     # PPO配置（RLlib 2.55+ 新API）
     config = (

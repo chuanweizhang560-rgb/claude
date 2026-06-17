@@ -80,7 +80,7 @@ def get_phase1_config() -> dict:
 
         # === 覆盖 ===
         "coverage": {
-            "coverage_dist_turbine": 12.0,
+            "coverage_dist_turbine": 15.0,  # 风机覆盖判定距离（1.1: 12→15m，更宽容）
             "coverage_dist_cable": 5.0,
             "coverage_threshold": 0.85,
         },
@@ -99,24 +99,26 @@ def get_phase1_config() -> dict:
 
         # === RL动作缩放 ===
         "action_scale": {
-            "horizontal": 1.0,    # Δvx,Δvy 缩放：±1 → ±1 m/s
-            "vertical": 0.5,     # Δvz 缩放：±1 → ±0.5 m/s
-            "yaw_rate": 0.5,     # Δyaw_rate 缩放：±1 → ±0.5 rad/s
+            "horizontal": 0.3,    # Δvx,Δvy 缩放：±1 → ±0.3 m/s（1.2: 1.0→0.3，减小RL干扰）
+            "vertical": 0.2,     # Δvz 缩放：±1 → ±0.2 m/s（1.2: 0.5→0.2）
+            "yaw_rate": 0.2,     # Δyaw_rate 缩放：±1 → ±0.2 rad/s（1.2: 0.5→0.2）
         },
 
         # === Episode ===
-        "max_steps": 1000,           # 最大步数（1000*0.05=50s仿真时间）
+        "max_steps": 2000,           # 最大步数（2000*0.05=100s仿真时间，1.1: 1000→2000）
         "randomize_start": True,     # 随机偏移起始位置
         "start_pos_range": 3.0,      # 起始位置随机范围 ±3m（减少初始距离差异）
         "randomize_wind": True,      # 随机风向偏移
 
         # === 奖励权重 ===
         "reward_weights": {
-            "coverage": 10.0,
+            "coverage": 50.0,          # 覆盖奖励（1.1: 10 → 50，增大5倍）
             "collision": 5.0,
-            "power": 0.1,
+            "power": 0.01,             # 功耗惩罚（1.1: 0.1 → 0.01，降低10倍）
             "battery_dead": 20.0,
-            "coverage_bonus": 50.0,   # 全覆盖完成额外奖励
+            "coverage_bonus": 100.0,   # 全覆盖完成额外奖励（1.1: 50 → 100）
+            "proximity": 0.1,          # 接近目标shaping reward（1.2: 2.0→0.5→0.1，大幅降低）
+            "task_progress": 10.0,     # 任务完成切换奖励（新增）
         },
     }
 

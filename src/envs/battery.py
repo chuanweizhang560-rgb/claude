@@ -14,11 +14,12 @@ class BatteryModel:
         self.base_radius = 5.0       # 基站判定半径
 
         # 功耗系数（与dynamics.py配合）
-        self.p_hover = 0.0167        # %/s 悬停功耗（~1%/min, 20min续航）
-        self.k_speed = 0.003         # %/(m/s) 速度功耗系数
-        self.k_climb = 0.005         # %/(m/s) 爬升额外功耗
-        self.k_wind = 0.001          # %/(m/s) 抗风额外功耗
-        self.k_accel = 0.002         # %/(m/s²) 大机动额外功耗
+        # 校准目标：悬停续航~20min(1200s)，5m/s飞行+1m/s爬升+3m/s风~8min
+        self.p_hover = 0.000833       # %/s 悬停功耗（~20min续航）
+        self.k_speed = 0.000150       # %/(m/s) 速度功耗系数
+        self.k_climb = 0.000250       # %/(m/s) 爬升额外功耗
+        self.k_wind = 0.000050        # %/(m/s) 抗风额外功耗
+        self.k_accel = 0.000100       # %/(m/s²) 大机动额外功耗
 
         # 从配置字典覆盖默认参数
         if config is not None:
@@ -137,7 +138,7 @@ if __name__ == "__main__":
     assert abs(power_full - expected_full) < 1e-6, "带风功耗计算错误"
 
     # 4. 电量更新测试
-    bm.update(power=0.02, dt=10.0)  # 消耗0.2
+    bm.update(power=0.002, dt=100.0)  # 消耗0.2
     print(f"消耗后电量: {bm.battery:.2f}")
     assert abs(bm.battery - 0.8) < 1e-6, "电量更新错误"
 

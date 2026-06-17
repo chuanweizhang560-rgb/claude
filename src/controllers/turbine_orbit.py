@@ -9,19 +9,25 @@ class TurbineOrbitController(RuleController):
     """
     风机螺旋环绕控制器
 
-    primary角色：螺旋上升，半径10m，yaw指向塔心
+    primary角色：螺旋上升，半径8m，yaw指向塔心
     assistant角色：在轮毂高度悬停，小半径(5m)缓慢旋转
+
+    控制策略：PD追踪轨道点，轨道点沿圆柱面缓慢移动
     """
 
     def __init__(self, config: dict = None):
-        self.orbit_radius = 10.0        # primary环绕半径
+        self.orbit_radius = 8.0         # primary环绕半径
         self.assistant_radius = 5.0     # assistant环绕半径
-        self.start_height = 5.0         # primary起始环绕高度
+        self.start_height = 3.0         # primary起始环绕高度（从底部开始）
         self.hub_height_offset = 5.0    # assistant在轮毂上方偏移
-        self.angular_speed = 0.1        # rad/s 环绕角速度
-        self.climb_speed = 0.5          # m/s 上升速度
+        self.angular_speed = 0.12       # rad/s 环绕角速度
+        self.climb_speed = 0.8          # m/s 上升速度（70m/0.8=87.5s完成一次螺旋）
         self.approach_speed = 5.0       # 接近速度 m/s
         self.dt = 0.05
+
+        # PD追踪增益
+        self.kp_track = 2.0             # 位置追踪P增益
+        self.kd_track = 0.3             # 位置追踪D增益
 
         # 内部状态
         self.orbit_angle = 0.0          # 当前环绕角度
@@ -49,22 +55,24 @@ class TurbineOrbitController(RuleController):
         hub_pos = turbine_pos.copy()
         hub_pos[2] += turbine_height
 
-        # 1. 计算到风机的距离
+        # 1. 计算到风机的XY距离
         to_turbine = turbine_pos - pos
         dist_xy = np.linalg.norm(self._vec2d(to_turbine))
-        dist_3d = np.linalg.norm(to_turbine)
 
-        # 2. 接近阶段：距离太远时先飞向风机
+        # 2. 接近阶段：距离太远时先飞向轨道起始点
         approach_dist = self.orbit_radius + 5.0
         if dist_xy > approach_dist:
-            # 飞向风机上方起始高度
-            approach_target = turbine_pos.copy()
-            approach_target[2] = self.start_height + turbine_pos[2]
+            # 飞向轨道起始点（风机底部附近的轨道位置）
+            approach_target = np.array([
+                turbine_pos[0] + self.orbit_radius,  # 轨道起始点（angle=0时在x正方向）
+                turbine_pos[1],
+                turbine_pos[2] + self.start_height,
+            ])
             to_approach = approach_target - pos
             dist_approach = np.linalg.norm(to_approach)
             if dist_approach > 1.0:
-                speed = min(self.approach_speed, dist_approach)
-                vel_cmd = to_approach / dist_approach * speed
+                # PD追踪
+                vel_cmd = self.kp_track * to_approach / dist_approach * min(dist_approach, self.approach_speed) - self.kd_track * vel[:3]
             else:
                 vel_cmd = np.zeros(3)
 
@@ -72,51 +80,60 @@ class TurbineOrbitController(RuleController):
             yaw_rate = self._yaw_rate_to_target(yaw, target_yaw, self.dt)
             return np.array([vel_cmd[0], vel_cmd[1], vel_cmd[2], yaw_rate])
 
-        # 3. 环绕阶段
+        # 3. 环绕阶段：PD追踪移动的轨道点
         self.orbit_angle += self.angular_speed * self.dt
 
         if role == 'primary':
-            # primary：螺旋上升
-            # 目标点在圆柱面上
-            target_on_orbit = np.array([
+            # 计算轨道目标点
+            orbit_target = np.array([
                 turbine_pos[0] + self.orbit_radius * np.cos(self.orbit_angle),
                 turbine_pos[1] + self.orbit_radius * np.sin(self.orbit_angle),
                 turbine_pos[2] + self.orbit_height,
             ])
+
+            # 更新轨道高度（螺旋上升）
             self.orbit_height += self.climb_speed * self.dt
-            # 到顶后停止上升
             if self.orbit_height > turbine_height:
                 self.orbit_height = turbine_height
 
-            # 检查UAV是否在轨道附近（距轨道点<5m则用切线，否则先飞向轨道点）
-            dist_to_orbit = np.linalg.norm(pos - target_on_orbit)
-            if dist_to_orbit > 5.0:
-                # 飞向轨道点
-                to_orbit = target_on_orbit - pos
-                speed = min(self.approach_speed, dist_to_orbit)
-                vel_cmd = to_orbit / dist_to_orbit * speed
-            else:
-                # 速度：切线方向 + 上升
-                tangent = np.array([
+            # PD追踪轨道目标点
+            error = orbit_target - pos
+            dist_to_target = np.linalg.norm(error)
+
+            if dist_to_target > 0.1:
+                # 期望速度 = 轨道点移动速度 + PD修正
+                # 轨道点速度（切线方向 + 上升）
+                orbit_vel = np.array([
                     -self.orbit_radius * self.angular_speed * np.sin(self.orbit_angle),
                     self.orbit_radius * self.angular_speed * np.cos(self.orbit_angle),
                     self.climb_speed,
                 ])
-                vel_cmd = tangent
+                # 前馈 + PD修正
+                vel_cmd = orbit_vel + self.kp_track * error - self.kd_track * vel[:3]
+            else:
+                # 已在轨道点上，用轨道速度
+                vel_cmd = np.array([
+                    -self.orbit_radius * self.angular_speed * np.sin(self.orbit_angle),
+                    self.orbit_radius * self.angular_speed * np.cos(self.orbit_angle),
+                    self.climb_speed,
+                ])
 
         else:
             # assistant：在轮毂高度悬停绕小圈
-            target_on_orbit = np.array([
+            orbit_target = np.array([
                 turbine_pos[0] + self.assistant_radius * np.cos(self.orbit_angle * 0.5),
                 turbine_pos[1] + self.assistant_radius * np.sin(self.orbit_angle * 0.5),
                 hub_pos[2] + self.hub_height_offset,
             ])
-            tangent = np.array([
+
+            orbit_vel = np.array([
                 -self.assistant_radius * self.angular_speed * 0.5 * np.sin(self.orbit_angle * 0.5),
                 self.assistant_radius * self.angular_speed * 0.5 * np.cos(self.orbit_angle * 0.5),
                 0.0,
             ])
-            vel_cmd = tangent
+
+            error = orbit_target - pos
+            vel_cmd = orbit_vel + self.kp_track * error - self.kd_track * vel[:3]
 
         # 4. yaw始终指向塔心
         target_yaw = self._yaw_to_target(pos, turbine_pos)
@@ -148,14 +165,14 @@ if __name__ == "__main__":
     ctrl2.orbit_angle = 0.0
     ctrl2.orbit_height = 30.0
     state_orbit = {
-        'pos': np.array([60.0, 0.0, 30.0]),  # 在环绕半径上
+        'pos': np.array([58.0, 0.0, 30.0]),  # 在环绕半径附近
         'vel': np.zeros(3),
         'yaw': 0.0,
         'target': target,
         'role': 'primary',
     }
     vel_orbit = ctrl2.get_guided_velocity(state_orbit)
-    print(f"primary环绕中: vel={vel_orbit}, 应有切线速度+上升")
+    print(f"primary环绕中: vel={vel_orbit}, 应有切线速度+上升+追踪修正")
 
     # 测试3: assistant
     ctrl3 = TurbineOrbitController()

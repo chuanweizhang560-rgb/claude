@@ -72,11 +72,13 @@ class InspectionEnv(gym.Env):
 
         # === 奖励权重 ===
         rw = config.get("reward_weights", {})
-        self.w_coverage = rw.get("coverage", 10.0)
+        self.w_coverage = rw.get("coverage", 50.0)
         self.w_collision = rw.get("collision", 5.0)
-        self.w_power = rw.get("power", 0.1)
+        self.w_power = rw.get("power", 0.01)
         self.w_battery_dead = rw.get("battery_dead", 20.0)
-        self.w_coverage_bonus = rw.get("coverage_bonus", 50.0)
+        self.w_coverage_bonus = rw.get("coverage_bonus", 100.0)
+        self.w_proximity = rw.get("proximity", 2.0)       # 接近目标shaping reward
+        self.w_task_progress = rw.get("task_progress", 10.0)  # 任务完成切换奖励
 
         # === 初始化模块 ===
         self._init_modules(config)
@@ -214,7 +216,9 @@ class InspectionEnv(gym.Env):
             rng = np.random.default_rng(seed + 1)
             self.wind_field.steady_direction = rng.uniform(0, 2 * np.pi)
 
-        # 重置覆盖状态
+        # 重置覆盖状态（逐段追踪）
+        self.turbine_segments = [np.zeros(20, dtype=bool) for _ in self.turbines]
+        self.cable_segments = [np.zeros(max(1, len(pts) - 1), dtype=bool) for pts in self.cable_points_list]
         self.turbine_coverage = [0.0] * len(self.turbines)
         self.cable_coverage = [0.0] * len(self.cables)
         self.prev_coverage = 0.0
@@ -252,12 +256,14 @@ class InspectionEnv(gym.Env):
             action[3] * self.scale_yaw,     # Δyaw_rate
         ])
 
-        # 任务选择（阶段1: 简化逻辑）
-        # action[4] > 0 → 切到下一个任务; 低电量强制返航
+        # 任务选择（阶段1.2改进：覆盖达标自动切换 + RL可提前切换）
         if self.battery.is_low_battery():
             self.current_task = self.TASK_RETURN
-        elif action[4] > 0.0:
-            # 按顺序切换: turbine → cable → explore → return
+        elif self._current_task_done():
+            # 当前任务覆盖达标，自动切到下一个
+            self.current_task = min(self.current_task + 1, self.TASK_RETURN)
+        elif action[4] > 0.8:
+            # RL主动切换（阈值0.8，随机策略约10%概率触发）
             self.current_task = min(self.current_task + 1, self.TASK_RETURN)
 
         # === 2. 规则控制器引导速度 ===
@@ -437,18 +443,22 @@ class InspectionEnv(gym.Env):
                         self.octomap.insert_point(cable_pts[idx], free_points=pos)
 
     def _update_coverage(self):
-        """更新覆盖进度"""
+        """更新覆盖进度（逐段累积，修复1.1的标量max bug）"""
         pos = np.array(self.uav_state['pos'])
 
-        # 风机覆盖
+        # 风机覆盖：逐段累积
         for i, turbine in enumerate(self.turbines):
-            cov = self.coverage_eval.compute_turbine_coverage(pos, turbine.position)
-            self.turbine_coverage[i] = max(self.turbine_coverage[i], cov)
+            seg_covered = self.coverage_eval.compute_turbine_segment_coverage(pos, turbine.position)
+            # 用OR累积每段覆盖状态
+            self.turbine_segments[i] = np.logical_or(self.turbine_segments[i], seg_covered)
+            self.turbine_coverage[i] = float(self.turbine_segments[i].mean())
 
-        # 电缆覆盖
+        # 电缆覆盖：逐段累积
         for i, cable_pts in enumerate(self.cable_points_list):
-            cov = self.coverage_eval.compute_cable_coverage(pos, cable_pts)
-            self.cable_coverage[i] = max(self.cable_coverage[i], cov)
+            seg_covered = self.coverage_eval.compute_cable_segment_coverage(pos, cable_pts)
+            if len(seg_covered) > 0:
+                self.cable_segments[i] = np.logical_or(self.cable_segments[i], seg_covered)
+                self.cable_coverage[i] = float(self.cable_segments[i].mean())
 
         # 总覆盖率（所有目标的平均）
         all_coverage = self.turbine_coverage + self.cable_coverage
@@ -465,17 +475,35 @@ class InspectionEnv(gym.Env):
         return True
 
     def _compute_reward(self, delta_coverage: float, is_collision: bool, power: float) -> float:
-        """计算奖励"""
+        """计算奖励（阶段1.2 改进版：shaping reward + 更大覆盖权重）"""
         reward = 0.0
 
-        # 覆盖奖励（主要驱动）
+        # 1. 覆盖奖励（主要驱动，权重增大到50）
         reward += self.w_coverage * delta_coverage
 
-        # 碰撞惩罚
+        # 2. 接近目标shaping reward
+        #    用exp衰减：远距离时给引导信号，近距离时趋近0
+        target_dist = self._get_target_distance()
+        proximity_reward = self.w_proximity * np.exp(-target_dist / 50.0) * self.dt
+
+        # 3. 任务完成切换奖励
+        #    当前任务目标覆盖达标时给额外奖励
+        if self.current_task == self.TASK_TURBINE:
+            for cov in self.turbine_coverage:
+                if cov >= 0.85:
+                    reward += self.w_task_progress * self.dt
+                    break
+        elif self.current_task == self.TASK_CABLE:
+            for cov in self.cable_coverage:
+                if cov >= 0.85:
+                    reward += self.w_task_progress * self.dt
+                    break
+
+        # 4. 碰撞惩罚
         if is_collision:
             reward -= self.w_collision
 
-        # 功耗惩罚（轻微）
+        # 5. 功耗惩罚（降低权重，不主导reward）
         reward -= self.w_power * power * self.dt
 
         return reward
@@ -557,6 +585,17 @@ class InspectionEnv(gym.Env):
             return np.linalg.norm(pos - self.base_position)
         else:
             return 0.0
+
+    def _current_task_done(self) -> bool:
+        """检查当前任务是否覆盖达标（用于自动切换）"""
+        if self.current_task == self.TASK_TURBINE:
+            return all(cov >= 0.85 for cov in self.turbine_coverage)
+        elif self.current_task == self.TASK_CABLE:
+            return all(cov >= 0.85 for cov in self.cable_coverage)
+        elif self.current_task == self.TASK_EXPLORE:
+            # 探索任务不自动完成
+            return False
+        return False
 
     def _get_current_target_pos(self) -> np.ndarray:
         """获取当前目标位置"""

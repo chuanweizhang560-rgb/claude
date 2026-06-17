@@ -31,27 +31,32 @@ class CoverageEvaluator:
         Returns:
             coverage: [0, 1] 覆盖进度
         """
-        # 将塔身沿高度分成N段
+        return self.compute_turbine_segment_coverage(uav_pos, turbine_pos).mean()
+
+    def compute_turbine_segment_coverage(self, uav_pos: np.ndarray,
+                                           turbine_pos: np.ndarray) -> np.ndarray:
+        """
+        计算风机每段的覆盖状态
+
+        Returns:
+            covered: (n_segments,) bool数组，每段是否被覆盖
+        """
         n_segments = 20
         segment_heights = np.linspace(0, self.turbine_height, n_segments + 1)
-        # 每段中心高度
         segment_centers = (segment_heights[:-1] + segment_heights[1:]) / 2.0
 
-        covered = 0
-        for h in segment_centers:
-            # 塔身上该段的3D位置（x,y与塔底相同，z为段中心高度+塔底z）
+        covered = np.zeros(n_segments, dtype=bool)
+        for j, h in enumerate(segment_centers):
             segment_pos = np.array([
                 turbine_pos[0],
                 turbine_pos[1],
                 turbine_pos[2] + h
             ])
-            # 无人机到该段的距离
             dist = np.linalg.norm(uav_pos - segment_pos)
             if dist < self.coverage_dist_turbine:
-                covered += 1
+                covered[j] = True
 
-        coverage = covered / n_segments
-        return coverage
+        return covered
 
     def compute_cable_coverage(self, uav_pos: np.ndarray,
                                cable_points: np.ndarray) -> float:
@@ -67,23 +72,29 @@ class CoverageEvaluator:
         Returns:
             coverage: [0, 1] 覆盖进度
         """
-        if len(cable_points) < 2:
-            return 0.0
+        return self.compute_cable_segment_coverage(uav_pos, cable_points).mean()
 
-        # 将电缆相邻点之间作为一段
+    def compute_cable_segment_coverage(self, uav_pos: np.ndarray,
+                                         cable_points: np.ndarray) -> np.ndarray:
+        """
+        计算电缆每段的覆盖状态
+
+        Returns:
+            covered: (n_segments,) bool数组，每段是否被覆盖
+        """
+        if len(cable_points) < 2:
+            return np.array([], dtype=bool)
+
         n_segments = len(cable_points) - 1
-        covered = 0
+        covered = np.zeros(n_segments, dtype=bool)
 
         for i in range(n_segments):
-            # 段中心点
             center = (cable_points[i] + cable_points[i + 1]) / 2.0
-            # 无人机到段中心的距离
             dist = np.linalg.norm(uav_pos - center)
             if dist < self.coverage_dist_cable:
-                covered += 1
+                covered[i] = True
 
-        coverage = covered / n_segments
-        return coverage
+        return covered
 
     def check_turbine_covered(self, coverage: float,
                               threshold: float = 0.85) -> bool:
